@@ -96,7 +96,7 @@
   .btn-primary { background: var(--accent); color: var(--accent-ink); }
   .btn-sub { background: var(--card); color: var(--ink); border-color: var(--line); }
 
-  .topbar { width: min(92vw, 440px); display: flex; justify-content: space-between; gap: 12px; }
+  .topbar { width: min(92vw, 440px); display: flex; justify-content: flex-end; }
   .topbar button { min-height: 46px; padding: 0 18px; font-size: 16px; }
 
   svg { width: min(88vw, 46vh, 400px); height: auto; display: block; }
@@ -106,8 +106,31 @@
   .num   { fill: var(--muted); font-size: 19px; font-weight: 600; font-variant-numeric: tabular-nums; }
 
   .readout { text-align: center; }
-  .time { font-size: 56px; font-weight: 700; line-height: 1.1; font-variant-numeric: tabular-nums; letter-spacing: 0.02em; }
-  .time.masked { color: var(--muted); letter-spacing: 0.12em; }
+  .time {
+    display: inline-block;
+    padding: 6px 14px;
+    border-radius: 14px;
+    cursor: pointer;
+    font-weight: 700;
+    line-height: 1.1;
+    font-variant-numeric: tabular-nums;
+    letter-spacing: 0.02em;
+  }
+  .time:active { opacity: 0.7; }
+  .time:focus-visible { outline: 3px solid var(--ink); outline-offset: 2px; }
+  #tMain { font-size: 56px; }
+  .time .ms {
+    display: inline-block;
+    width: 2.5em; /* 幅を固定して、数字が変わっても全体が揺れないようにする */
+    margin-left: 2px;
+    text-align: left;
+    font-size: 22px;
+    font-weight: 600;
+    letter-spacing: 0;
+    color: var(--muted);
+  }
+  .time.masked #tMain { color: var(--muted); letter-spacing: 0.12em; }
+  .hint { margin-top: 2px; font-size: 13px; color: var(--muted); }
   .status { margin-top: 4px; min-height: 1.4em; font-size: 15px; color: var(--muted); }
 
   .buttons { width: min(92vw, 440px); display: flex; gap: 12px; }
@@ -196,7 +219,6 @@
 
 <main id="view-timer" class="screen">
   <div class="topbar">
-    <button id="toggleTime" class="btn-sub" type="button">数字を隠す</button>
     <button id="toRecords" class="btn-sub" type="button">記録（<span id="recCount">0</span>）</button>
   </div>
 
@@ -207,8 +229,9 @@
   </svg>
 
   <div class="readout">
-    <div class="time" id="time">00:00</div>
+    <div class="time" id="time" role="button" tabindex="0"><span id="tMain">00:00</span><span class="ms" id="tMs">.000</span></div>
     <div class="status" id="status"></div>
+    <div class="hint" id="hint">数字をタップすると、表示・非表示を切り替えられます</div>
   </div>
 
   <div class="buttons">
@@ -265,6 +288,7 @@
 (function () {
   var TOTAL = 60 * 60; // 秒
   var TOTAL_MS = TOTAL * 1000;
+  var TICK_MS = 100; // 画面の更新間隔（ミリ秒表示はこの間隔で動く）
   var CX = 200, CY = 200, R = 140;
   var NS = 'http://www.w3.org/2000/svg';
   var KEY_REC = 'timerRecords.v1';
@@ -273,6 +297,7 @@
 
   function $(id) { return document.getElementById(id); }
   function pad(n) { return n < 10 ? '0' + n : String(n); }
+  function pad3(n) { return n < 10 ? '00' + n : (n < 100 ? '0' + n : String(n)); }
 
   /* ---------- 端末保存（localStorage） ---------- */
   var storageOK = false;
@@ -303,6 +328,7 @@
 
   /* ---------- 画面の部品 ---------- */
   var elSector = $('sector'), elTime = $('time'), elStatus = $('status');
+  var elMain = $('tMain'), elMs = $('tMs'), elHint = $('hint');
   var btnMain = $('main'), btnReset = $('reset');
   var panel = $('savePanel'), titleIn = $('titleIn'), dateIn = $('dateIn'), saveBtn = $('saveBtn');
   $('noStorage').hidden = storageOK;
@@ -385,13 +411,15 @@
     elSector.setAttribute('d', sectorPath(ms / TOTAL_MS));
     // 数字を隠す設定でも、ストップ後と60分到達後は、保存前に確認できるよう表示する
     var shown = !hideTime || state === 'stopped' || state === 'done';
-    elTime.textContent = shown ? fmtClock(Math.floor(ms / 1000)) : '••:••';
+    elMain.textContent = shown ? fmtClock(Math.floor(ms / 1000)) : '••:••';
+    elMs.textContent = shown ? '.' + pad3(Math.floor(ms % 1000)) : '•••';
     elTime.classList.toggle('masked', !shown);
   }
 
   function setUI() {
     var showPanel = state === 'stopped' || state === 'done';
     panel.hidden = !showPanel;
+    elHint.hidden = state !== 'idle';
     if (state === 'idle') {
       btnMain.textContent = 'スタート！'; btnMain.disabled = false;
       elStatus.textContent = 'スタートを押すと計測を始めます';
@@ -426,7 +454,7 @@
   function start() {
     startedAt = Date.now();
     state = 'running';
-    if (timerId === null) timerId = setInterval(render, 200);
+    if (timerId === null) timerId = setInterval(render, TICK_MS);
     requestWake();
     persistState(); setUI(); render();
   }
@@ -461,16 +489,22 @@
     btnReset.classList.remove('armed');
     btnReset.textContent = 'リセット';
   }
-  var btnToggleTime = $('toggleTime');
-  function updateToggleLabel() {
-    btnToggleTime.textContent = hideTime ? '数字を出す' : '数字を隠す';
-    btnToggleTime.setAttribute('aria-pressed', hideTime ? 'true' : 'false');
+  // 数字そのものをタップして、表示と非表示を切り替える
+  function updateTimeAria() {
+    elTime.setAttribute('aria-label', hideTime ? '経過時間は非表示です。押すと表示します' : '経過時間。押すと隠します');
   }
-  btnToggleTime.addEventListener('click', function () {
+  function toggleTime() {
     hideTime = !hideTime;
     lsSet(KEY_PREF, JSON.stringify({ hideTime: hideTime }));
-    updateToggleLabel();
+    updateTimeAria();
     render();
+    if (state === 'stopped' || state === 'done') {
+      toast(hideTime ? '次の計測から数字を隠します' : '次の計測から数字を表示します');
+    }
+  }
+  elTime.addEventListener('click', toggleTime);
+  elTime.addEventListener('keydown', function (e) {
+    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleTime(); }
   });
 
   btnReset.addEventListener('click', function () {
@@ -525,7 +559,7 @@
       elapsed = Math.max(0, Math.min(st.elapsed, TOTAL_MS));
       if (st.state === 'running' && typeof st.startedAt === 'number' && st.startedAt <= Date.now()) {
         startedAt = st.startedAt; state = 'running';
-        timerId = setInterval(render, 200);
+        timerId = setInterval(render, TICK_MS);
       } else if (st.state === 'stopped' || st.state === 'done') {
         state = st.state;
         dateIn.value = todayStr();
@@ -680,7 +714,7 @@
 
   /* ---------- 起動 ---------- */
   updateCount();
-  updateToggleLabel();
+  updateTimeAria();
   setUI();
   render();
   if (location.hash === '#records') showView('records');
