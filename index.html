@@ -96,7 +96,7 @@
   .btn-primary { background: var(--accent); color: var(--accent-ink); }
   .btn-sub { background: var(--card); color: var(--ink); border-color: var(--line); }
 
-  .topbar { width: min(92vw, 440px); display: flex; justify-content: flex-end; }
+  .topbar { width: min(92vw, 440px); display: flex; justify-content: space-between; gap: 12px; }
   .topbar button { min-height: 46px; padding: 0 18px; font-size: 16px; }
 
   svg { width: min(88vw, 46vh, 400px); height: auto; display: block; }
@@ -107,6 +107,7 @@
 
   .readout { text-align: center; }
   .time { font-size: 56px; font-weight: 700; line-height: 1.1; font-variant-numeric: tabular-nums; letter-spacing: 0.02em; }
+  .time.masked { color: var(--muted); letter-spacing: 0.12em; }
   .status { margin-top: 4px; min-height: 1.4em; font-size: 15px; color: var(--muted); }
 
   .buttons { width: min(92vw, 440px); display: flex; gap: 12px; }
@@ -195,6 +196,7 @@
 
 <main id="view-timer" class="screen">
   <div class="topbar">
+    <button id="toggleTime" class="btn-sub" type="button">数字を隠す</button>
     <button id="toRecords" class="btn-sub" type="button">記録（<span id="recCount">0</span>）</button>
   </div>
 
@@ -277,6 +279,11 @@
   try { localStorage.setItem('timer.__t', '1'); localStorage.removeItem('timer.__t'); storageOK = true; } catch (e) {}
   function lsGet(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }
   function lsSet(k, v) { try { localStorage.setItem(k, v); return true; } catch (e) { return false; } }
+
+  // 表示の設定（数字を隠すかどうか）
+  var KEY_PREF = 'timerPrefs.v1';
+  var hideTime = false;
+  try { var pf = JSON.parse(lsGet(KEY_PREF) || '{}'); hideTime = pf && pf.hideTime === true; } catch (e) {}
 
   var records = [];
   (function () {
@@ -376,7 +383,10 @@
     var ms = currentMs();
     if (ms >= TOTAL_MS) { ms = TOTAL_MS; if (state === 'running') finish(); }
     elSector.setAttribute('d', sectorPath(ms / TOTAL_MS));
-    elTime.textContent = fmtClock(Math.floor(ms / 1000));
+    // 数字を隠す設定でも、ストップ後と60分到達後は、保存前に確認できるよう表示する
+    var shown = !hideTime || state === 'stopped' || state === 'done';
+    elTime.textContent = shown ? fmtClock(Math.floor(ms / 1000)) : '••:••';
+    elTime.classList.toggle('masked', !shown);
   }
 
   function setUI() {
@@ -451,6 +461,18 @@
     btnReset.classList.remove('armed');
     btnReset.textContent = 'リセット';
   }
+  var btnToggleTime = $('toggleTime');
+  function updateToggleLabel() {
+    btnToggleTime.textContent = hideTime ? '数字を出す' : '数字を隠す';
+    btnToggleTime.setAttribute('aria-pressed', hideTime ? 'true' : 'false');
+  }
+  btnToggleTime.addEventListener('click', function () {
+    hideTime = !hideTime;
+    lsSet(KEY_PREF, JSON.stringify({ hideTime: hideTime }));
+    updateToggleLabel();
+    render();
+  });
+
   btnReset.addEventListener('click', function () {
     if (state !== 'idle' && currentMs() >= 1000 && !btnReset.classList.contains('armed')) {
       btnReset.classList.add('armed');
@@ -658,6 +680,7 @@
 
   /* ---------- 起動 ---------- */
   updateCount();
+  updateToggleLabel();
   setUI();
   render();
   if (location.hash === '#records') showView('records');
